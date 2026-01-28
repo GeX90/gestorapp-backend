@@ -236,4 +236,106 @@ export class TransactionsService {
       transactionCount: transactions.length,
     };
   }
+
+  /**
+   * Exportar transacciones de un mes específico a CSV
+   */
+  async exportToCSV(userId: string, month: number, year: number): Promise<string> {
+    if (!month || !year) {
+      throw new BadRequestException('Debes proporcionar mes y año');
+    }
+
+    if (month < 1 || month > 12) {
+      throw new BadRequestException('El mes debe estar entre 1 y 12');
+    }
+
+    // Obtener transacciones del mes
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+
+    const transactions = await this.prisma.transaction.findMany({
+      where: {
+        userId,
+        date: {
+          gte: startDate,
+          lte: endDate,
+        },
+      },
+      include: {
+        category: {
+          select: {
+            name: true,
+            type: true,
+          },
+        },
+      },
+      orderBy: {
+        date: 'asc',
+      },
+    });
+
+    if (transactions.length === 0) {
+      throw new NotFoundException(`No hay transacciones para ${month}/${year}`);
+    }
+
+    // Generar CSV
+    const headers = ['Fecha', 'Categoría', 'Tipo', 'Monto', 'Descripción'];
+    const csvRows = [headers.join(',')];
+
+    for (const transaction of transactions) {
+      const row = [
+        this.formatDate(transaction.date),
+        this.escapeCSV(transaction.category.name),
+        transaction.category.type,
+        transaction.amount.toFixed(2),
+        this.escapeCSV(transaction.description || ''),
+      ];
+      csvRows.push(row.join(','));
+    }
+
+    // Agregar totales al final
+    const totalIncome = transactions
+      .filter(t => t.category.type === 'INCOME')
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const totalExpense = transactions
+      .filter(t => t.category.type === 'EXPENSE')
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    csvRows.push(''); // Línea vacía
+    csvRows.push('RESUMEN');
+    csvRows.push(`Total Ingresos,,INCOME,${totalIncome.toFixed(2)}`);
+    csvRows.push(`Total Gastos,,EXPENSE,${totalExpense.toFixed(2)}`);
+    csvRows.push(`Balance,,,${(totalIncome - totalExpense).toFixed(2)}`);
+
+    return csvRows.join('\n');
+  }
+
+  /**
+   * Formatear fecha para CSV
+   */
+  private formatDate(date: Date): string {
+    const d = new Date(date);
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}`;
+  }
+
+  /**
+   * Escapar valores para CSV (manejar comas y comillas)
+   */
+  private escapeCSV(value: string): string {
+    if (!value) return '';
+    
+    // Si contiene coma, comilla o salto de línea, envolver en comillas
+    if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+      // Duplicar comillas dentro del valor
+      return `"${value.replace(/"/g, '""')}"`;
+    }
+    
+    return value;
+  }
 }

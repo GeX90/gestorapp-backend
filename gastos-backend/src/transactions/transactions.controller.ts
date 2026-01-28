@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Request, Res, HttpStatus, ParseIntPipe } from '@nestjs/common';
 import { TransactionsService } from './transactions.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { UpdateTransactionDto } from './dto/update-transaction.dto';
@@ -80,5 +80,38 @@ export class TransactionsController {
   remove(@Request() req, @Param('id') id: string) {
     const userId = req.user.userId;
     return this.transactionsService.remove(id, userId);
+  }
+
+  /**
+   * GET /transactions/export/:year/:month
+   * Exportar transacciones de un mes específico a CSV
+   */
+  @Get('export/:year/:month')
+  async exportCSV(
+    @Request() req,
+    @Param('year', ParseIntPipe) year: number,
+    @Param('month', ParseIntPipe) month: number,
+    @Res() res,
+  ) {
+    const userId = req.user.userId;
+    
+    try {
+      const csv = await this.transactionsService.exportToCSV(userId, month, year);
+      
+      // Configurar headers para descarga de archivo
+      const fileName = `transacciones_${year}_${String(month).padStart(2, '0')}.csv`;
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      
+      // Agregar BOM para que Excel reconozca UTF-8
+      res.write('\ufeff');
+      res.write(csv);
+      res.end();
+    } catch (error) {
+      res.status(HttpStatus.BAD_REQUEST).json({
+        statusCode: HttpStatus.BAD_REQUEST,
+        message: error.message,
+      });
+    }
   }
 }
